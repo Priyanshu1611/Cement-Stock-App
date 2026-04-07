@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import type { Session } from "@supabase/supabase-js"
+// import type { Session } from "@supabase/supabase-js"
 import type { CellHook } from "jspdf-autotable"
 import { hasSupabaseEnv, supabase } from "@/lib/supabase-client"
 
@@ -88,8 +88,8 @@ const calculateItem = (item: ItemRow): CalculatedItem => {
 }
 
 export default function BillingPage() {
-  const [session, setSession] = useState<Session | null>(null)
-  const [authLoading, setAuthLoading] = useState(true)
+  // const [session, setSession] = useState<Session | null>(null)
+  // const [authLoading, setAuthLoading] = useState(true)
   const [firmName, setFirmName] = useState(firms[0].name)
   const [invoiceNo, setInvoiceNo] = useState("")
   const [customerName, setCustomerName] = useState("")
@@ -119,42 +119,43 @@ export default function BillingPage() {
     }
   }, [])
 
-  useEffect(() => {
-    let mounted = true
+  // AUTH useEffect — COMMENTED OUT
+  // useEffect(() => {
+  //   let mounted = true
 
-    async function loadSession() {
-      if (!supabase) {
-        setAuthLoading(false)
-        return
-      }
+  //   async function loadSession() {
+  //     if (!supabase) {
+  //       setAuthLoading(false)
+  //       return
+  //     }
 
-      const { data } = await supabase.auth.getSession()
-      if (mounted) {
-        setSession(data.session)
-        setAuthLoading(false)
-      }
-    }
+  //     const { data } = await supabase.auth.getSession()
+  //     if (mounted) {
+  //       setSession(data.session)
+  //       setAuthLoading(false)
+  //     }
+  //   }
 
-    loadSession()
+  //   loadSession()
 
-    if (!supabase) {
-      return () => {
-        mounted = false
-      }
-    }
+  //   if (!supabase) {
+  //     return () => {
+  //       mounted = false
+  //     }
+  //   }
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      if (mounted) {
-        setSession(newSession)
-        setAuthLoading(false)
-      }
-    })
+  //   const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+  //     if (mounted) {
+  //       setSession(newSession)
+  //       setAuthLoading(false)
+  //     }
+  //   })
 
-    return () => {
-      mounted = false
-      listener.subscription.unsubscribe()
-    }
-  }, [])
+  //   return () => {
+  //     mounted = false
+  //     listener.subscription.unsubscribe()
+  //   }
+  // }, [])
 
   const selectedFirm = useMemo(
     () => firms.find((firm) => firm.name === firmName) ?? firms[0],
@@ -197,20 +198,21 @@ export default function BillingPage() {
     setRows((prev) => (prev.length > 1 ? prev.filter((row) => row.id !== id) : prev))
   }
 
-  const loginWithGoogle = async () => {
-    if (!supabase) return
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/billing`,
-      },
-    })
-  }
+  // AUTH FUNCTIONS — COMMENTED OUT
+  // const loginWithGoogle = async () => {
+  //   if (!supabase) return
+  //   await supabase.auth.signInWithOAuth({
+  //     provider: "google",
+  //     options: {
+  //       redirectTo: `${window.location.origin}/billing`,
+  //     },
+  //   })
+  // }
 
-  const logout = async () => {
-    if (!supabase) return
-    await supabase.auth.signOut()
-  }
+  // const logout = async () => {
+  //   if (!supabase) return
+  //   await supabase.auth.signOut()
+  // }
 
   const generatePdf = async () => {
     persistSuggestions(customerName, rows.map((row) => row.description))
@@ -365,56 +367,60 @@ export default function BillingPage() {
     }
   }
 
-  if (!hasSupabaseEnv) {
-    return (
-      <main className="min-h-screen bg-background p-4 md:p-8">
-        <div className="mx-auto max-w-3xl rounded-xl border bg-card p-6">
-          <h1 className="text-2xl font-bold">Billing Setup Required</h1>
-          <p className="mt-3 text-base text-muted-foreground">
-            Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and either{" "}
-            <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> or{" "}
-            <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY</code> in your environment, then enable Google
-            provider in Supabase Auth.
-          </p>
-        </div>
-      </main>
-    )
-  }
+  // SUPABASE ENV CHECK — COMMENTED OUT
+  // if (!hasSupabaseEnv) {
+  //   return (
+  //     <main className="min-h-screen bg-background p-4 md:p-8">
+  //       <div className="mx-auto max-w-3xl rounded-xl border bg-card p-6">
+  //         <h1 className="text-2xl font-bold">Billing Setup Required</h1>
+  //         <p className="mt-3 text-base text-muted-foreground">
+  //           Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and either{" "}
+  //           <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> or{" "}
+  //           <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY</code> in your environment, then enable Google
+  //           provider in Supabase Auth.
+  //         </p>
+  //       </div>
+  //     </main>
+  //   )
+  // }
 
-  if (authLoading) {
-    return (
-      <main className="min-h-screen bg-background p-6">
-        <div className="mx-auto max-w-3xl rounded-xl border bg-card p-6 text-lg">Checking login...</div>
-      </main>
-    )
-  }
+  // AUTH LOADING STATE — COMMENTED OUT
+  // if (authLoading) {
+  //   return (
+  //     <main className="min-h-screen bg-background p-6">
+  //       <div className="mx-auto max-w-3xl rounded-xl border bg-card p-6 text-lg">Checking login...</div>
+  //     </main>
+  //   )
+  // }
 
-  if (!session) {
-    return (
-      <main className="min-h-screen bg-background p-4 md:p-8">
-        <div className="mx-auto max-w-xl rounded-xl border bg-card p-8 text-center">
-          <h1 className="text-3xl font-bold">GST Billing</h1>
-          <p className="mt-3 text-base text-muted-foreground">
-            Sign in with Google to access the billing page.
-          </p>
-          <button
-            type="button"
-            onClick={loginWithGoogle}
-            className="mt-6 w-full rounded-lg bg-primary px-4 py-4 text-lg font-semibold text-primary-foreground"
-          >
-            Login with Google
-          </button>
-        </div>
-      </main>
-    )
-  }
+  // LOGIN WALL — COMMENTED OUT
+  // if (!session) {
+  //   return (
+  //     <main className="min-h-screen bg-background p-4 md:p-8">
+  //       <div className="mx-auto max-w-xl rounded-xl border bg-card p-8 text-center">
+  //         <h1 className="text-3xl font-bold">GST Billing</h1>
+  //         <p className="mt-3 text-base text-muted-foreground">
+  //           Sign in with Google to access the billing page.
+  //         </p>
+  //         <button
+  //           type="button"
+  //           onClick={loginWithGoogle}
+  //           className="mt-6 w-full rounded-lg bg-primary px-4 py-4 text-lg font-semibold text-primary-foreground"
+  //         >
+  //           Login with Google
+  //         </button>
+  //       </div>
+  //     </main>
+  //   )
+  // }
 
   return (
     <main className="min-h-screen bg-background p-3 md:p-6">
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-col gap-3 rounded-xl border bg-card p-4 md:flex-row md:items-center md:justify-between">
           <h1 className="text-2xl font-bold">GST Billing</h1>
-          <div className="flex flex-wrap items-center gap-2">
+          {/* AUTH HEADER ACTIONS — COMMENTED OUT */}
+          {/* <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-md bg-secondary px-3 py-2 text-sm md:text-base">{session.user.email}</span>
             <button
               type="button"
@@ -423,7 +429,7 @@ export default function BillingPage() {
             >
               Logout
             </button>
-          </div>
+          </div> */}
         </header>
 
         <section className="rounded-xl border bg-card p-4">
@@ -619,6 +625,5 @@ export default function BillingPage() {
         </section>
       </div>
     </main>
-    // added test comment
   )
 }
