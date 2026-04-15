@@ -68,6 +68,7 @@ const UNIT_OPTIONS = [
 
 const CUSTOMER_CACHE_KEY = "billing-customer-names"
 const DESCRIPTION_CACHE_KEY = "billing-item-descriptions"
+const CUSTOMER_GST_CACHE_KEY = "billing-customer-gst"
 
 const createRow = (): ItemRow => ({
   id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -117,16 +118,28 @@ const calculateItem = (item: ItemRow): CalculatedItem => {
   return { amount: taxable, gst: gstAmount, cgst, sgst, total }
 }
 
+const getTodayYMD = () => {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function BillingPage() {
   const [firmName, setFirmName] = useState(firms[0].name)
   const [invoiceNo, setInvoiceNo] = useState("")
+  const [invoiceDate, setInvoiceDate] = useState(getTodayYMD())
   const [customerName, setCustomerName] = useState("")
   const [mobile, setMobile] = useState("")
+  const [customerGst, setCustomerGst] = useState("")
   const [rows, setRows] = useState<ItemRow[]>([createRow()])
+  
   const [customerSuggestions, setCustomerSuggestions] = useState<string[]>([])
   const [descriptionSuggestions, setDescriptionSuggestions] = useState<string[]>([])
+  const [customerGstSuggestions, setCustomerGstSuggestions] = useState<string[]>([])
+  
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
-
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfFileName, setPdfFileName] = useState<string>("")
@@ -140,6 +153,10 @@ export default function BillingPage() {
     if (cachedDescriptions) {
       try { setDescriptionSuggestions(JSON.parse(cachedDescriptions) as string[]) } catch { setDescriptionSuggestions([]) }
     }
+    const cachedGsts = localStorage.getItem(CUSTOMER_GST_CACHE_KEY)
+    if (cachedGsts) {
+      try { setCustomerGstSuggestions(JSON.parse(cachedGsts) as string[]) } catch { setCustomerGstSuggestions([]) }
+    }
   }, [])
 
   const selectedFirm = useMemo(() => firms.find((firm) => firm.name === firmName) ?? firms[0], [firmName])
@@ -152,12 +169,17 @@ export default function BillingPage() {
     )
   }, [calculations])
 
-  const persistSuggestions = (nameInput?: string, descriptionInputs?: string[]) => {
+  const persistSuggestions = (nameInput?: string, descriptionInputs?: string[], gstInput?: string) => {
     if (typeof window === "undefined") return
     if (nameInput?.trim()) {
       const next = Array.from(new Set([nameInput.trim(), ...customerSuggestions])).slice(0, 50)
       setCustomerSuggestions(next)
       localStorage.setItem(CUSTOMER_CACHE_KEY, JSON.stringify(next))
+    }
+    if (gstInput?.trim()) {
+      const nextGst = Array.from(new Set([gstInput.trim(), ...customerGstSuggestions])).slice(0, 50)
+      setCustomerGstSuggestions(nextGst)
+      localStorage.setItem(CUSTOMER_GST_CACHE_KEY, JSON.stringify(nextGst))
     }
     if (descriptionInputs && descriptionInputs.length > 0) {
       const clean = descriptionInputs.map((value) => value.trim()).filter(Boolean)
@@ -183,7 +205,7 @@ export default function BillingPage() {
   }
 
   const generatePdf = async () => {
-    persistSuggestions(customerName, rows.map((row) => row.description))
+    persistSuggestions(customerName, rows.map((row) => row.description), customerGst)
     setIsGeneratingPdf(true)
     try {
       const { jsPDF } = await import("jspdf")
@@ -191,7 +213,13 @@ export default function BillingPage() {
       const autoTable = autoTableModule.default as any
 
       const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" })
-      const invoiceDate = new Date().toLocaleDateString("en-IN")
+      
+      let displayDate = new Date().toLocaleDateString("en-IN")
+      if (invoiceDate) {
+        const [y, m, d] = invoiceDate.split("-")
+        if (y && m && d) displayDate = `${d}/${m}/${y}`
+      }
+
       const centerX = 105
 
       doc.setFont("helvetica", "normal").setFontSize(9)
@@ -199,9 +227,9 @@ export default function BillingPage() {
       doc.text("** Shree Ganeshay Namah **", centerX, 11, { align: "center" })
       doc.text(`Mo. ${selectedFirm.firmMobile}`, 196, 11, { align: "right" })
 
-      let y = 18
-      doc.setFont("helvetica", "bold").setFontSize(15).text(selectedFirm.name, centerX, y, { align: "center" })
-      y += 6
+      let y = 19
+      doc.setFont("helvetica", "bold").setFontSize(22).text(selectedFirm.name, centerX, y, { align: "center" })
+      y += 7
 
       doc.setFont("helvetica", "normal").setFontSize(9)
       const addressLines = doc.splitTextToSize(selectedFirm.address, 175)
@@ -214,7 +242,7 @@ export default function BillingPage() {
       y += 8
 
       doc.text(`Invoice No.: ${invoiceNo.trim() || "-"}`, 14, y)
-      doc.text(`Date: ${invoiceDate}`, 196, y, { align: "right" })
+      doc.text(`Date: ${displayDate}`, 196, y, { align: "right" })
 
       const custY = y + 7
       doc.setFontSize(10)
@@ -222,9 +250,17 @@ export default function BillingPage() {
       const nameLines = doc.splitTextToSize(customerLine, 125)
       let lineY = custY
       for (const line of nameLines) { doc.text(line, 14, lineY); lineY += 5.2 }
+      
+      if (customerGst.trim()) {
+        doc.setFont("helvetica", "bold")
+        doc.text(`Party GSTIN: ${customerGst.trim()}`, 14, lineY)
+        doc.setFont("helvetica", "normal")
+        lineY += 5.2
+      }
+
       doc.text(`Customer Mo.: ${mobile.trim() || "-"}`, 196, custY, { align: "right" })
 
-      const bodyRows = rows.map((row, index) => {
+      const bodyRows: any[] = rows.map((row, index) => {
         const calc = calculations[index]
         const dispRate = currency(displayRatePerUnit(row, calc))
         return [
@@ -234,6 +270,15 @@ export default function BillingPage() {
           currency(calc.cgst), currency(calc.sgst), currency(calc.total),
         ]
       })
+
+      const MIN_ROWS_FOR_FULL_PAGE = 20
+      const missingRows = MIN_ROWS_FOR_FULL_PAGE - bodyRows.length
+      
+      if (missingRows > 0) {
+        for (let i = 0; i < missingRows; i++) {
+          bodyRows.push(["", "", "", "", "", "", "", "", "", "", ""])
+        }
+      }
 
       autoTable(doc, {
         startY: lineY + 5,
@@ -246,7 +291,14 @@ export default function BillingPage() {
         ]],
         styles: { font: "helvetica", fontSize: 8, lineColor: [0, 0, 0], lineWidth: 0.1, textColor: [0, 0, 0] },
         headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold", halign: "center" },
-        footStyles: { fontStyle: "bold", fillColor: [245, 245, 245] },
+        footStyles: { fontStyle: "bold", fillColor: [245, 245, 245], lineWidth: 0.1 },
+        // This is the magic hook to remove horizontal lines on empty rows
+        didParseCell: (data: any) => {
+          if (data.section === "body" && data.row.raw[0] === "") {
+            // keep left/right borders, but remove top/bottom borders
+            data.cell.styles.lineWidth = { top: 0, right: 0.1, bottom: 0, left: 0.1 }
+          }
+        }
       })
 
       const finalY = (doc as any).lastAutoTable?.finalY ?? lineY + 40
@@ -286,7 +338,6 @@ export default function BillingPage() {
     
     const textMessage = `Hello ${customerName || ''}, please find your attached invoice. Total Amount: Rs. ${currency(totals.total)}`
     
-    // The fallback logic we trigger if native sharing fails or is unsupported
     const executeFallback = () => {
       alert("Native file sharing is unavailable. The invoice will download now, and WhatsApp will open so you can attach it manually.")
       downloadPdf()
@@ -304,8 +355,6 @@ export default function BillingPage() {
         })
       } catch (error: any) {
         console.error("Error sharing:", error)
-        // "AbortError" means the user manually clicked the 'X' to close the share sheet.
-        // We only want to trigger the fallback if the system actually threw an error (like your screenshot).
         if (error.name !== "AbortError") {
           executeFallback()
         }
@@ -326,14 +375,14 @@ export default function BillingPage() {
           <h2 className="mb-3 text-lg font-semibold">Billing Details</h2>
           <div className="mb-4 rounded-lg border bg-muted/40 p-4 text-center">
             <p className="text-xs text-muted-foreground">** Shree Ganeshay Namah **</p>
-            <p className="mt-1 text-2xl font-bold leading-tight md:text-3xl">{selectedFirm.name}</p>
+            <p className="mt-1 text-3xl font-bold leading-tight md:text-4xl">{selectedFirm.name}</p>
             <p className="mt-2 text-sm text-muted-foreground">GSTIN: {selectedFirm.gst}</p>
             <p className="mt-1 text-base">Seller Mo. {selectedFirm.firmMobile}</p>
             <p className="mt-2 text-sm leading-snug md:text-base">{selectedFirm.address}</p>
             <p className="mt-2 text-base font-medium">{selectedFirm.tagline}</p>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <label className="space-y-1">
+            <label className="space-y-1 md:col-span-2">
               <span className="text-sm font-medium">Firm</span>
               <select className="w-full rounded-md border bg-background px-3 py-3 text-lg" value={firmName} onChange={(e) => setFirmName(e.target.value)}>
                 {firms.map((f) => <option key={f.name} value={f.name}>{f.name} ({f.gst})</option>)}
@@ -343,14 +392,23 @@ export default function BillingPage() {
               <span className="text-sm font-medium">Invoice No.</span>
               <input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="e.g. 4521" className="w-full rounded-md border bg-background px-3 py-3 text-lg" />
             </label>
+            <label className="space-y-1">
+              <span className="text-sm font-medium">Date</span>
+              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full rounded-md border bg-background px-3 py-3 text-lg" />
+            </label>
             <label className="space-y-1 md:col-span-2">
               <span className="text-sm font-medium">Customer Name</span>
               <input list="customer-suggestions" value={customerName} onChange={(e) => setCustomerName(e.target.value)} onBlur={() => persistSuggestions(customerName)} placeholder="Enter customer name" className="w-full rounded-md border bg-background px-3 py-3 text-lg" />
               <datalist id="customer-suggestions">{customerSuggestions.map((v) => <option key={v} value={v} />)}</datalist>
             </label>
-            <label className="space-y-1 md:col-span-2">
+            <label className="space-y-1">
               <span className="text-sm font-medium">Mobile No.</span>
               <input value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="Enter mobile number" className="w-full rounded-md border bg-background px-3 py-3 text-lg" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-sm font-medium">Customer GST</span>
+              <input list="customer-gst-suggestions" value={customerGst} onChange={(e) => setCustomerGst(e.target.value)} onBlur={() => persistSuggestions(undefined, undefined, customerGst)} placeholder="Enter GSTIN" className="w-full rounded-md border bg-background px-3 py-3 text-lg" />
+              <datalist id="customer-gst-suggestions">{customerGstSuggestions.map((v) => <option key={v} value={v} />)}</datalist>
             </label>
           </div>
         </section>
