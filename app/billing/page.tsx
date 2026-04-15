@@ -87,6 +87,12 @@ const toNumber = (value: string): number => {
 
 const currency = (value: number): string => value.toFixed(2)
 
+const displayRatePerUnit = (item: ItemRow, calc: CalculatedItem): number => {
+  const qty = toNumber(item.quantity)
+  if (qty === 0) return 0
+  return item.gstType === "+" ? calc.total / qty : calc.amount / qty
+}
+
 const calculateItem = (item: ItemRow): CalculatedItem => {
   const quantity = toNumber(item.quantity)
   const rate = toNumber(item.rate)
@@ -121,6 +127,10 @@ export default function BillingPage() {
   const [descriptionSuggestions, setDescriptionSuggestions] = useState<string[]>([])
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
 
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [pdfFileName, setPdfFileName] = useState<string>("")
+
   useEffect(() => {
     const cachedCustomers = localStorage.getItem(CUSTOMER_CACHE_KEY)
     if (cachedCustomers) {
@@ -137,9 +147,7 @@ export default function BillingPage() {
 
   const totals = useMemo(() => {
     return calculations.reduce(
-      (acc, item) => ({
-        total: acc.total + item.total,
-      }),
+      (acc, item) => ({ total: acc.total + item.total }),
       { total: 0 }
     )
   }, [calculations])
@@ -216,12 +224,16 @@ export default function BillingPage() {
       for (const line of nameLines) { doc.text(line, 14, lineY); lineY += 5.2 }
       doc.text(`Customer Mo.: ${mobile.trim() || "-"}`, 196, custY, { align: "right" })
 
-      const bodyRows = rows.map((row, index) => [
-        String(index + 1), row.description || "-", row.hsnCode || "-", row.unit,
-        currency(toNumber(row.quantity)), currency(toNumber(row.rate)),
-        currency(calculations[index].amount), `${row.gstType}${toNumber(row.gstPercent)}%`,
-        currency(calculations[index].cgst), currency(calculations[index].sgst), currency(calculations[index].total),
-      ])
+      const bodyRows = rows.map((row, index) => {
+        const calc = calculations[index]
+        const dispRate = currency(displayRatePerUnit(row, calc))
+        return [
+          String(index + 1), row.description || "-", row.hsnCode || "-", row.unit,
+          currency(toNumber(row.quantity)), dispRate,
+          currency(calc.amount), `${toNumber(row.gstPercent)}%`,
+          currency(calc.cgst), currency(calc.sgst), currency(calc.total),
+        ]
+      })
 
       autoTable(doc, {
         startY: lineY + 5,
@@ -239,14 +251,72 @@ export default function BillingPage() {
 
       const finalY = (doc as any).lastAutoTable?.finalY ?? lineY + 40
       doc.text("Seller Signature", 196, finalY + 14, { align: "right" })
-      doc.save(`gst-invoice-${Date.now()}.pdf`)
+      
+      const blob = doc.output("blob")
+      const blobUrl = URL.createObjectURL(blob)
+      const fileName = `gst-invoice-${Date.now()}.pdf`
+      
+      setPreviewUrl(blobUrl)
+      setPdfFile(new File([blob], fileName, { type: "application/pdf" }))
+      setPdfFileName(fileName)
+
     } finally {
       setIsGeneratingPdf(false)
     }
   }
 
+  const closePreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setPreviewUrl(null)
+    setPdfFile(null)
+  }
+
+  const downloadPdf = () => {
+    if (!previewUrl) return
+    const link = document.createElement("a")
+    link.href = previewUrl
+    link.download = pdfFileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const shareViaWhatsApp = async () => {
+    if (!pdfFile) return
+    
+    const textMessage = `Hello ${customerName || ''}, please find your attached invoice. Total Amount: Rs. ${currency(totals.total)}`
+    
+    // The fallback logic we trigger if native sharing fails or is unsupported
+    const executeFallback = () => {
+      alert("Native file sharing is unavailable. The invoice will download now, and WhatsApp will open so you can attach it manually.")
+      downloadPdf()
+      const phoneStr = mobile.replace(/\D/g, "")
+      const encodedText = encodeURIComponent(textMessage)
+      window.open(`https://wa.me/${phoneStr}?text=${encodedText}`, "_blank")
+    }
+
+    if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+      try {
+        await navigator.share({
+          files: [pdfFile],
+          title: `Invoice - ${customerName || 'Customer'}`,
+          text: textMessage,
+        })
+      } catch (error: any) {
+        console.error("Error sharing:", error)
+        // "AbortError" means the user manually clicked the 'X' to close the share sheet.
+        // We only want to trigger the fallback if the system actually threw an error (like your screenshot).
+        if (error.name !== "AbortError") {
+          executeFallback()
+        }
+      }
+    } else {
+      executeFallback()
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-background p-3 md:p-6">
+    <main className="min-h-screen relative bg-background p-3 md:p-6">
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-col gap-3 rounded-xl border bg-card p-4 md:flex-row md:items-center md:justify-between">
           <h1 className="text-2xl font-bold">GST Billing</h1>
@@ -345,38 +415,88 @@ export default function BillingPage() {
                 <tr className="bg-muted">
                   <th className="border px-1 py-2 text-center">S.No.</th>
                   <th className="border px-1 py-2 text-left">Description</th>
+                  <th className="border px-1 py-2 text-right">Qty</th>
+                  <th className="border px-1 py-2 text-right">Rate</th>
                   <th className="border px-1 py-2 text-right">Taxable Amt</th>
+                  <th className="border px-1 py-2 text-right">GST %</th>
                   <th className="border px-1 py-2 text-right">CGST</th>
                   <th className="border px-1 py-2 text-right">SGST</th>
                   <th className="border px-1 py-2 text-right">Final Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
-                  <tr key={row.id}>
-                    <td className="border px-2 py-2 text-center">{index + 1}</td>
-                    <td className="border px-2 py-2">{row.description || "-"}</td>
-                    <td className="border px-2 py-2 text-right">{currency(calculations[index].amount)}</td>
-                    <td className="border px-2 py-2 text-right">{currency(calculations[index].cgst)}</td>
-                    <td className="border px-2 py-2 text-right">{currency(calculations[index].sgst)}</td>
-                    <td className="border px-2 py-2 text-right font-semibold">{currency(calculations[index].total)}</td>
-                  </tr>
-                ))}
+                {rows.map((row, index) => {
+                  const calc = calculations[index]
+                  const dispRate = displayRatePerUnit(row, calc)
+                  return (
+                    <tr key={row.id}>
+                      <td className="border px-2 py-2 text-center">{index + 1}</td>
+                      <td className="border px-2 py-2">{row.description || "-"}</td>
+                      <td className="border px-2 py-2 text-right">{currency(toNumber(row.quantity))}</td>
+                      <td className="border px-2 py-2 text-right">{currency(dispRate)}</td>
+                      <td className="border px-2 py-2 text-right">{currency(calc.amount)}</td>
+                      <td className="border px-2 py-2 text-right">{toNumber(row.gstPercent)}%</td>
+                      <td className="border px-2 py-2 text-right">{currency(calc.cgst)}</td>
+                      <td className="border px-2 py-2 text-right">{currency(calc.sgst)}</td>
+                      <td className="border px-2 py-2 text-right font-semibold">{currency(calc.total)}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
           <div className="mt-4 flex flex-col items-end justify-center rounded bg-muted p-4">
-              <span className="text-sm font-bold">Grand Total</span>
-              <span className="text-2xl font-bold">{currency(totals.total)}</span>
+            <span className="text-sm font-bold">Grand Total</span>
+            <span className="text-2xl font-bold">{currency(totals.total)}</span>
           </div>
         </section>
 
         <section className="flex justify-end pb-8">
           <button type="button" onClick={generatePdf} disabled={isGeneratingPdf} className="rounded-md bg-primary px-6 py-3 text-lg font-semibold text-primary-foreground">
-            {isGeneratingPdf ? "Generating..." : "Generate PDF"}
+            {isGeneratingPdf ? "Generating..." : "Preview PDF"}
           </button>
         </section>
       </div>
+
+      {/* PDF Preview Modal */}
+      {previewUrl && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 p-2 backdrop-blur-sm md:p-6">
+          <div className="flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-background shadow-2xl">
+            <div className="flex items-center justify-between border-b p-4">
+              <h3 className="text-xl font-bold">Invoice Preview</h3>
+              <button onClick={closePreview} className="rounded-md border bg-muted px-4 py-2 text-sm font-medium hover:bg-muted/80">
+                Close
+              </button>
+            </div>
+            
+            <div className="flex-1 bg-muted/30 p-2 md:p-4">
+              <iframe 
+                src={previewUrl} 
+                className="h-full w-full rounded border bg-white shadow-sm" 
+                title="PDF Preview" 
+              />
+            </div>
+            
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t p-4">
+              <button 
+                onClick={downloadPdf} 
+                className="rounded-md border bg-secondary px-5 py-2 font-medium text-secondary-foreground hover:bg-secondary/80"
+              >
+                Download PDF
+              </button>
+              <button 
+                onClick={shareViaWhatsApp} 
+                className="flex items-center gap-2 rounded-md bg-[#25D366] px-5 py-2 font-medium text-white hover:bg-[#20b858] transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                </svg>
+                Share via WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
