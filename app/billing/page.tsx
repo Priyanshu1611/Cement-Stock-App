@@ -156,7 +156,8 @@ export default function BillingPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchInvoiceNo, setSearchInvoiceNo] = useState("")
   const [searchCustomer, setSearchCustomer] = useState("")
-  const [searchDate, setSearchDate] = useState("")
+  const [searchDateFrom, setSearchDateFrom] = useState("")
+  const [searchDateTo, setSearchDateTo] = useState("")
   const [isSearching, setIsSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<InvoiceSearchResult[] | null>(null)
 
@@ -280,7 +281,7 @@ export default function BillingPage() {
   }
 
   const handleSearch = async () => {
-    if (!searchInvoiceNo.trim() && !searchCustomer.trim() && !searchDate.trim()) {
+    if (!searchInvoiceNo.trim() && !searchCustomer.trim() && !searchDateFrom.trim() && !searchDateTo.trim()) {
       toast.error("Enter at least one search field")
       return
     }
@@ -289,7 +290,8 @@ export default function BillingPage() {
       const results = await searchInvoices({
         invoiceNumber: searchInvoiceNo,
         customerName: searchCustomer,
-        date: searchDate,
+        dateFrom: searchDateFrom,
+        dateTo: searchDateTo,
       })
       setSearchResults(results)
       if (results.length === 0) toast.info("No invoices found")
@@ -367,7 +369,7 @@ export default function BillingPage() {
         {hasSupabaseEnv && searchOpen && (
           <section className="rounded-xl border bg-card p-4 space-y-3">
             <h2 className="text-lg font-semibold">Search Bills</h2>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
               <label className="space-y-1">
                 <span className="text-sm font-medium">Invoice Number</span>
                 <input
@@ -389,11 +391,20 @@ export default function BillingPage() {
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-sm font-medium">Date</span>
+                <span className="text-sm font-medium">From Date</span>
                 <input
                   type="date"
-                  value={searchDate}
-                  onChange={(e) => setSearchDate(e.target.value)}
+                  value={searchDateFrom}
+                  onChange={(e) => setSearchDateFrom(e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium">To Date</span>
+                <input
+                  type="date"
+                  value={searchDateTo}
+                  onChange={(e) => setSearchDateTo(e.target.value)}
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 />
               </label>

@@ -109,14 +109,15 @@ export async function saveBillingInvoice(data: SaveInvoiceInput): Promise<number
 export async function searchInvoices(params: {
   invoiceNumber?: string
   customerName?: string
-  date?: string
+  dateFrom?: string
+  dateTo?: string
 }): Promise<InvoiceSearchResult[]> {
   if (!supabase) throw new Error("Supabase not configured")
 
   let query = supabase
     .from("invoices")
     .select("id, firm_name, invoice_number, invoice_date, customer_name, customer_mobile, grand_total, created_at")
-    .order("created_at", { ascending: false })
+    .order("invoice_date", { ascending: false })
     .limit(100)
 
   if (params.invoiceNumber?.trim()) {
@@ -125,8 +126,11 @@ export async function searchInvoices(params: {
   if (params.customerName?.trim()) {
     query = query.ilike("customer_name", `%${params.customerName.trim()}%`)
   }
-  if (params.date?.trim()) {
-    query = query.eq("invoice_date", params.date.trim())
+  if (params.dateFrom?.trim()) {
+    query = query.gte("invoice_date", params.dateFrom.trim())
+  }
+  if (params.dateTo?.trim()) {
+    query = query.lte("invoice_date", params.dateTo.trim())
   }
 
   const { data, error } = await query
