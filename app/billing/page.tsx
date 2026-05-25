@@ -1,8 +1,11 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import type { CellHook } from "jspdf-autotable"
-import { hasSupabaseEnv, supabase } from "@/lib/supabase-client"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
+import { hasSupabaseEnv } from "@/lib/supabase-client"
+import { saveBillingInvoice, searchInvoices, type InvoiceSearchResult } from "@/lib/billing-actions"
+import { generateInvoicePdf } from "@/lib/generate-invoice-pdf"
 
 type Firm = {
   name: string
@@ -24,11 +27,11 @@ type ItemRow = {
 }
 
 type CalculatedItem = {
-  amount: number 
+  amount: number
   gst: number
   cgst: number
   sgst: number
-  total: number 
+  total: number
 }
 
 const SHARED_FIRM_CONTACT = "9425461119, 8770328909"
@@ -62,7 +65,7 @@ const HSN_OPTIONS = [
 ]
 
 const UNIT_OPTIONS = [
-  "Bags", "Pieces", "Kg", "Ton", "Cubic Meter", "Cubic Feet", 
+  "Bags", "Pieces", "Kg", "Ton", "Cubic Meter", "Cubic Feet",
   "Liters", "Meters", "Square Feet", "Hours", "Trips",
 ]
 
@@ -98,7 +101,7 @@ const calculateItem = (item: ItemRow): CalculatedItem => {
   const quantity = toNumber(item.quantity)
   const rate = toNumber(item.rate)
   const gstPercent = toNumber(item.gstPercent)
-  const baseAmount = quantity * rate 
+  const baseAmount = quantity * rate
 
   let taxable = 0
   let gstAmount = 0
@@ -121,12 +124,14 @@ const calculateItem = (item: ItemRow): CalculatedItem => {
 const getTodayYMD = () => {
   const d = new Date()
   const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
   return `${year}-${month}-${day}`
 }
 
 export default function BillingPage() {
+  const router = useRouter()
+
   const [firmName, setFirmName] = useState(firms[0].name)
   const [invoiceNo, setInvoiceNo] = useState("")
   const [invoiceDate, setInvoiceDate] = useState(getTodayYMD())
@@ -134,15 +139,26 @@ export default function BillingPage() {
   const [mobile, setMobile] = useState("")
   const [customerGst, setCustomerGst] = useState("")
   const [rows, setRows] = useState<ItemRow[]>([createRow()])
-  
+
   const [customerSuggestions, setCustomerSuggestions] = useState<string[]>([])
   const [descriptionSuggestions, setDescriptionSuggestions] = useState<string[]>([])
   const [customerGstSuggestions, setCustomerGstSuggestions] = useState<string[]>([])
-  
+
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfFileName, setPdfFileName] = useState<string>("")
+
+  // Save state
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchInvoiceNo, setSearchInvoiceNo] = useState("")
+  const [searchCustomer, setSearchCustomer] = useState("")
+  const [searchDate, setSearchDate] = useState("")
+  const [isSearching, setIsSearching] = useState(false)
+  const [searchResults, setSearchResults] = useState<InvoiceSearchResult[] | null>(null)
 
   useEffect(() => {
     const cachedCustomers = localStorage.getItem(CUSTOMER_CACHE_KEY)
@@ -208,112 +224,79 @@ export default function BillingPage() {
     persistSuggestions(customerName, rows.map((row) => row.description), customerGst)
     setIsGeneratingPdf(true)
     try {
-      const { jsPDF } = await import("jspdf")
-      const autoTableModule = await import("jspdf-autotable")
-      const autoTable = autoTableModule.default as any
-
-      const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" })
-      
-      let displayDate = new Date().toLocaleDateString("en-IN")
-      if (invoiceDate) {
-        const [y, m, d] = invoiceDate.split("-")
-        if (y && m && d) displayDate = `${d}/${m}/${y}`
-      }
-
-      const centerX = 105
-
-      doc.setFont("helvetica", "normal").setFontSize(9)
-      doc.text(`GSTIN: ${selectedFirm.gst}`, 14, 11)
-      doc.text("** Shree Ganeshay Namah **", centerX, 11, { align: "center" })
-      doc.text(`Mo. ${selectedFirm.firmMobile}`, 196, 11, { align: "right" })
-
-      let y = 19
-      doc.setFont("helvetica", "bold").setFontSize(22).text(selectedFirm.name, centerX, y, { align: "center" })
-      y += 7
-
-      doc.setFont("helvetica", "normal").setFontSize(9)
-      const addressLines = doc.splitTextToSize(selectedFirm.address, 175)
-      addressLines.forEach((line: string) => { doc.text(line, centerX, y, { align: "center" }); y += 4 })
-
-      y += 1
-      doc.setFont("helvetica", "bold").setFontSize(10).text(TAGLINE, centerX, y, { align: "center" })
-      y += 5
-      doc.setFont("helvetica", "normal").setFontSize(9).text(`Seller Mo. ${SHARED_FIRM_CONTACT}`, centerX, y, { align: "center" })
-      y += 8
-
-      doc.text(`Invoice No.: ${invoiceNo.trim() || "-"}`, 14, y)
-      doc.text(`Date: ${displayDate}`, 196, y, { align: "right" })
-
-      const custY = y + 7
-      doc.setFontSize(10)
-      const customerLine = `Mr./Ms.: ${customerName.trim() || "-"}`
-      const nameLines = doc.splitTextToSize(customerLine, 125)
-      let lineY = custY
-      for (const line of nameLines) { doc.text(line, 14, lineY); lineY += 5.2 }
-      
-      if (customerGst.trim()) {
-        doc.setFont("helvetica", "bold")
-        doc.text(`Party GSTIN: ${customerGst.trim()}`, 14, lineY)
-        doc.setFont("helvetica", "normal")
-        lineY += 5.2
-      }
-
-      doc.text(`Customer Mo.: ${mobile.trim() || "-"}`, 196, custY, { align: "right" })
-
-      const bodyRows: any[] = rows.map((row, index) => {
-        const calc = calculations[index]
-        const dispRate = currency(displayRatePerUnit(row, calc))
-        return [
-          String(index + 1), row.description || "-", row.hsnCode || "-", row.unit,
-          currency(toNumber(row.quantity)), dispRate,
-          currency(calc.amount), `${toNumber(row.gstPercent)}%`,
-          currency(calc.cgst), currency(calc.sgst), currency(calc.total),
-        ]
+      const result = await generateInvoicePdf({
+        firm: selectedFirm,
+        invoiceNo,
+        invoiceDate,
+        customerName,
+        mobile,
+        customerGst,
+        items: rows,
       })
-
-      const MIN_ROWS_FOR_FULL_PAGE = 20
-      const missingRows = MIN_ROWS_FOR_FULL_PAGE - bodyRows.length
-      
-      if (missingRows > 0) {
-        for (let i = 0; i < missingRows; i++) {
-          bodyRows.push(["", "", "", "", "", "", "", "", "", "", ""])
-        }
-      }
-
-      autoTable(doc, {
-        startY: lineY + 5,
-        theme: "grid",
-        head: [["S.No.", "Description", "HSN/SAC", "Unit", "Quantity", "Rate", "Taxable Amt", "GST %", "CGST", "SGST", "Final Amount"]],
-        body: bodyRows,
-        foot: [[
-          { content: "Grand Total", colSpan: 10, styles: { halign: "right" } },
-          { content: currency(totals.total), styles: { halign: "right" } },
-        ]],
-        styles: { font: "helvetica", fontSize: 8, lineColor: [0, 0, 0], lineWidth: 0.1, textColor: [0, 0, 0] },
-        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold", halign: "center" },
-        footStyles: { fontStyle: "bold", fillColor: [245, 245, 245], lineWidth: 0.1 },
-        // This is the magic hook to remove horizontal lines on empty rows
-        didParseCell: (data: any) => {
-          if (data.section === "body" && data.row.raw[0] === "") {
-            // keep left/right borders, but remove top/bottom borders
-            data.cell.styles.lineWidth = { top: 0, right: 0.1, bottom: 0, left: 0.1 }
-          }
-        }
-      })
-
-      const finalY = (doc as any).lastAutoTable?.finalY ?? lineY + 40
-      doc.text("Seller Signature", 196, finalY + 14, { align: "right" })
-      
-      const blob = doc.output("blob")
-      const blobUrl = URL.createObjectURL(blob)
-      const fileName = `gst-invoice-${Date.now()}.pdf`
-      
-      setPreviewUrl(blobUrl)
-      setPdfFile(new File([blob], fileName, { type: "application/pdf" }))
-      setPdfFileName(fileName)
-
+      setPreviewUrl(result.blobUrl)
+      setPdfFile(result.file)
+      setPdfFileName(result.fileName)
     } finally {
       setIsGeneratingPdf(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!customerName.trim()) {
+      toast.error("Enter customer name before saving")
+      return
+    }
+    setIsSaving(true)
+    try {
+      const id = await saveBillingInvoice({
+        firmName,
+        invoiceNumber: invoiceNo,
+        invoiceDate,
+        customerName,
+        customerMobile: mobile,
+        customerGst,
+        grandTotal: totals.total,
+        items: rows.map((row, idx) => ({
+          description: row.description,
+          hsnCode: row.hsnCode,
+          unit: row.unit,
+          quantity: row.quantity,
+          rate: row.rate,
+          gstPercent: row.gstPercent,
+          gstType: row.gstType,
+          taxableAmount: calculations[idx].amount,
+          cgst: calculations[idx].cgst,
+          sgst: calculations[idx].sgst,
+          totalAmount: calculations[idx].total,
+        })),
+      })
+      persistSuggestions(customerName, rows.map((r) => r.description), customerGst)
+      toast.success(`Invoice saved (ID: ${id})`)
+    } catch (err: any) {
+      toast.error(`Save failed: ${err?.message ?? "Unknown error"}`)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchInvoiceNo.trim() && !searchCustomer.trim() && !searchDate.trim()) {
+      toast.error("Enter at least one search field")
+      return
+    }
+    setIsSearching(true)
+    try {
+      const results = await searchInvoices({
+        invoiceNumber: searchInvoiceNo,
+        customerName: searchCustomer,
+        date: searchDate,
+      })
+      setSearchResults(results)
+      if (results.length === 0) toast.info("No invoices found")
+    } catch (err: any) {
+      toast.error(`Search failed: ${err?.message ?? "Unknown error"}`)
+    } finally {
+      setIsSearching(false)
     }
   }
 
@@ -335,9 +318,9 @@ export default function BillingPage() {
 
   const shareViaWhatsApp = async () => {
     if (!pdfFile) return
-    
-    const textMessage = `Hello ${customerName || ''}, please find your attached invoice. Total Amount: Rs. ${currency(totals.total)}`
-    
+
+    const textMessage = `Hello ${customerName || ""}, please find your attached invoice. Total Amount: Rs. ${currency(totals.total)}`
+
     const executeFallback = () => {
       alert("Native file sharing is unavailable. The invoice will download now, and WhatsApp will open so you can attach it manually.")
       downloadPdf()
@@ -350,7 +333,7 @@ export default function BillingPage() {
       try {
         await navigator.share({
           files: [pdfFile],
-          title: `Invoice - ${customerName || 'Customer'}`,
+          title: `Invoice - ${customerName || "Customer"}`,
           text: textMessage,
         })
       } catch (error: any) {
@@ -369,7 +352,116 @@ export default function BillingPage() {
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-col gap-3 rounded-xl border bg-card p-4 md:flex-row md:items-center md:justify-between">
           <h1 className="text-2xl font-bold">GST Billing</h1>
+          {hasSupabaseEnv && (
+            <button
+              type="button"
+              onClick={() => { setSearchOpen((v) => !v); setSearchResults(null) }}
+              className="rounded-md border bg-secondary px-4 py-2 text-sm font-semibold text-secondary-foreground"
+            >
+              {searchOpen ? "Close Search" : "Search Bills"}
+            </button>
+          )}
         </header>
+
+        {/* Search Panel */}
+        {hasSupabaseEnv && searchOpen && (
+          <section className="rounded-xl border bg-card p-4 space-y-3">
+            <h2 className="text-lg font-semibold">Search Bills</h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Invoice Number</span>
+                <input
+                  value={searchInvoiceNo}
+                  onChange={(e) => setSearchInvoiceNo(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                  placeholder="e.g. 4521"
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Customer Name</span>
+                <input
+                  value={searchCustomer}
+                  onChange={(e) => setSearchCustomer(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                  placeholder="Customer name"
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Date</span>
+                <input
+                  type="date"
+                  value={searchDate}
+                  onChange={(e) => setSearchDate(e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleSearch}
+                disabled={isSearching}
+                className="rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+              >
+                {isSearching ? "Searching..." : "Search"}
+              </button>
+              {searchResults !== null && (
+                <button
+                  type="button"
+                  onClick={() => setSearchResults(null)}
+                  className="rounded-md border px-4 py-2 text-sm font-medium"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {searchResults !== null && searchResults.length > 0 && (
+              <div className="overflow-auto rounded-lg border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">ID</th>
+                      <th className="px-3 py-2 text-left font-medium">Invoice No.</th>
+                      <th className="px-3 py-2 text-left font-medium">Customer</th>
+                      <th className="px-3 py-2 text-left font-medium">Date</th>
+                      <th className="px-3 py-2 text-left font-medium">Firm</th>
+                      <th className="px-3 py-2 text-right font-medium">Total (₹)</th>
+                      <th className="px-3 py-2 text-center font-medium">View</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {searchResults.map((inv) => (
+                      <tr
+                        key={inv.id}
+                        className="border-t hover:bg-muted/50 cursor-pointer"
+                        onClick={() => router.push(`/billing/view?id=${inv.id}`)}
+                      >
+                        <td className="px-3 py-2 text-muted-foreground">#{inv.id}</td>
+                        <td className="px-3 py-2">{inv.invoice_number ?? "-"}</td>
+                        <td className="px-3 py-2 font-medium">{inv.customer_name}</td>
+                        <td className="px-3 py-2">{inv.invoice_date}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{inv.firm_name}</td>
+                        <td className="px-3 py-2 text-right font-semibold">
+                          {Number(inv.grand_total).toFixed(2)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Open →</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {searchResults !== null && searchResults.length === 0 && (
+              <p className="text-sm text-muted-foreground">No bills found for given criteria.</p>
+            )}
+          </section>
+        )}
 
         <section className="rounded-xl border bg-card p-4">
           <h2 className="mb-3 text-lg font-semibold">Billing Details</h2>
@@ -509,7 +601,17 @@ export default function BillingPage() {
           </div>
         </section>
 
-        <section className="flex justify-end pb-8">
+        <section className="flex justify-end gap-3 pb-8">
+          {hasSupabaseEnv && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="rounded-md border bg-secondary px-6 py-3 text-lg font-semibold text-secondary-foreground disabled:opacity-60"
+            >
+              {isSaving ? "Saving..." : "Save Invoice"}
+            </button>
+          )}
           <button type="button" onClick={generatePdf} disabled={isGeneratingPdf} className="rounded-md bg-primary px-6 py-3 text-lg font-semibold text-primary-foreground">
             {isGeneratingPdf ? "Generating..." : "Preview PDF"}
           </button>
@@ -526,28 +628,28 @@ export default function BillingPage() {
                 Close
               </button>
             </div>
-            
+
             <div className="flex-1 bg-muted/30 p-2 md:p-4">
-              <iframe 
-                src={previewUrl} 
-                className="h-full w-full rounded border bg-white shadow-sm" 
-                title="PDF Preview" 
+              <iframe
+                src={previewUrl}
+                className="h-full w-full rounded border bg-white shadow-sm"
+                title="PDF Preview"
               />
             </div>
-            
+
             <div className="flex flex-wrap items-center justify-end gap-3 border-t p-4">
-              <button 
-                onClick={downloadPdf} 
+              <button
+                onClick={downloadPdf}
                 className="rounded-md border bg-secondary px-5 py-2 font-medium text-secondary-foreground hover:bg-secondary/80"
               >
                 Download PDF
               </button>
-              <button 
-                onClick={shareViaWhatsApp} 
+              <button
+                onClick={shareViaWhatsApp}
                 className="flex items-center gap-2 rounded-md bg-[#25D366] px-5 py-2 font-medium text-white hover:bg-[#20b858] transition-colors"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
                 </svg>
                 Share via WhatsApp
               </button>
